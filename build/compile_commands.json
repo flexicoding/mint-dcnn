@@ -1,0 +1,7 @@
+[
+{
+  "directory": "/Users/felixa.hower/code projects/c++/mint-dcnn/build",
+  "command": "/usr/bin/clang++  -I\"/Users/felixa.hower/code projects/c++/mint-dcnn/src\" -g -arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX12.3.sdk -std=gnu++17 -o CMakeFiles/dcnn.dir/src/main.cpp.o -c \"/Users/felixa.hower/code projects/c++/mint-dcnn/src/main.cpp\"",
+  "file": "/Users/felixa.hower/code projects/c++/mint-dcnn/src/main.cpp"
+}
+]

@@ -1,0 +1,3 @@
+/Users/felixa.hower/code projects/c++/mint-dcnn/build/CMakeFiles/rebuild_cache.dir
+/Users/felixa.hower/code projects/c++/mint-dcnn/build/CMakeFiles/edit_cache.dir
+/Users/felixa.hower/code projects/c++/mint-dcnn/build/CMakeFiles/dcnn.dir
