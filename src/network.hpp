@@ -36,7 +36,8 @@ namespace dcnn
 
         explicit Network(double (*activation_function)(double x), double (*activation_function_derivative)(double x),
                          uint32_t input_nodes = 4, uint32_t output_nodes = 3, uint32_t hidden_nodes = 12,
-                         uint32_t min_connections = 2, uint32_t max_connections = 12, double learning_rate = 0.01f)
+                         uint32_t min_connections = 2, uint32_t max_connections = 12, double learning_rate = 0.01f,
+                         double threshold = 0.3f)
         {
             m_activation_function = activation_function;
             m_activation_function_derivative = activation_function_derivative;
@@ -51,6 +52,9 @@ namespace dcnn
             m_input_nodes.resize(m_input_nodes_c);
             m_output_nodes.resize(m_output_nodes_c);
             m_hidden_nodes.resize(m_hidden_nodes_c);
+
+            m_learning_rate = learning_rate;
+            m_threshold = threshold;
 
             generate_random_input_nodes();
             generate_random_hidden_nodes();
@@ -68,54 +72,119 @@ namespace dcnn
         void propagate_backward(std::vector<double>* target)
         {
             std::vector<double> sqr_error;
+
+            if(m_output_nodes.size() > target->size()) throw std::runtime_error("[ERROR] Cannot determine sqr error of unequal vectors.\n");
+            
             for(uint32_t i = 0; i < m_outputs.size(); i++)
             {
                 sqr_error.push_back(pow(target->at(i) - m_outputs[i], 2));
             }
 
-            std::vector<std::vector<double>> temp_weight_gradient(m_output_nodes_c);
-            std::vector<double> temp_bias_gradient(m_output_nodes_c);
-            std::vector<std::vector<double>> temp_alpha_gradient1(m_output_nodes_c);
+            std::vector<Node*> tasks1;
+            std::vector<Node*> tasks2(1);
 
-            std::vector<std::vector<double>> temp_alpha_gradient2;
+            std::vector<Node*> completed;
 
             for(uint32_t i = 0; i < m_output_nodes_c; i++)
             {
-                node_gradient(sqr_error[i], &m_output_nodes[i], &temp_weight_gradient[i],
-                              &temp_bias_gradient[i], &temp_alpha_gradient1[i]);
+                node_gradient(sqr_error[i], &m_output_nodes[i]);
+                for(uint32_t j = 0; j < m_output_nodes[i].in_conns.size(); j++) tasks1.push_back(m_output_nodes[i].in_conns[j].first);
+            }
+        
+            bool second = false;
+            while(tasks1.size() != 0 && tasks2.size() != 0)
+            {
+                if(!second)
+                {
+                    for(uint32_t i = 0; i < tasks1.size(); i++)
+                    {
+                        node_gradient(get_alpha_gradient(tasks1[i]), tasks1[i]);
+                        completed.push_back(tasks1[i]);
+                    }
+
+                    tasks2 = std::vector<Node*>();
+
+                    for(uint32_t i = 0; i < tasks1.size(); i++)
+                    {
+                        for(uint32_t j = 0; j < tasks1[i]->in_conns.size(); j++)
+                        {
+                            if(tasks1[i]->in_conns[j].first->node_type != 1 && !find_in_vec(&completed, tasks1[i]->in_conns[j].first))
+                            {
+                                tasks2.push_back(tasks1[i]->in_conns[j].first);
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    for(uint32_t i = 0; i < tasks2.size(); i++)
+                    {
+                        node_gradient(get_alpha_gradient(tasks2[i]), tasks2[i]);
+                        completed.push_back(tasks2[i]);
+                    }
+
+                    tasks1 = std::vector<Node*>();
+
+                    for(uint32_t i = 0; i < tasks2.size(); i++)
+                    {
+                        for(uint32_t j = 0; j < tasks2[i]->in_conns.size(); j++)
+                        {
+                            if(tasks2[i]->in_conns[j].first->node_type != 1 && !find_in_vec(&completed, tasks2[i]->in_conns[j].first))
+                            {
+                                tasks1.push_back(tasks2[i]->in_conns[j].first);
+                            }
+                        }
+                    }
+                }
+                second = !second;
+            }
+        }
+        void apply_gradient()
+        {
+            std::vector<std::pair<Node*, uint32_t>> change_objs;
+            std::vector<std::pair<Node*, uint32_t>> change_tars;
+            for(auto& node : m_weight_gradient)
+            {
+                for(uint32_t i = 0; i < node.first->in_conns.size(); i++)
+                {
+                    node.first->in_conns[i].second -= node.second[i];
+                    if(node.second[i] < -m_threshold && node.first->in_conns.size() > 1)
+                        change_objs.push_back(std::pair(node.first, i));
+                    else if(node.second[i] > m_threshold)
+                        change_tars.push_back(std::pair(node.first, i));
+                }
             }
 
-            m_weight_gradient.push_back(temp_weight_gradient);
-            m_bias_gradient.push_back(temp_bias_gradient);
-
-            /*printf("");
-
-            for(uint32_t i = 0; i < m_output_nodes_c; i++)
+            for(auto& node : m_bias_gradient)
             {
-                temp_weight_gradient.resize(0);
-                temp_bias_gradient.resize(0);
+                node.first->bias -= node.second;
+            }
 
-                for(uint32_t j = 0; j < m_output_nodes[i].in_conns.size(); j++)
+            std::vector<Node*> used;
+            for(auto& change : change_objs)
+            {
+                auto val = rand_range<uint32_t>(0, change_tars.size() - 1);
+                auto weight = change.first->in_conns[change.second].second;
+
+                remove_index(&change.first->in_conns[change.second].first->out_conns, get_node_index(change.first->in_conns[change.second].first, change.first));
+                remove_index(&change.first->in_conns, change.second);
+
+                double best_val = -INFINITY;
+                Node* best_node;
+                for(auto& node : m_hidden_nodes)
                 {
-                    auto& n_in_conns = m_output_nodes[i].in_conns;
-
-                    temp_weight_gradient.resize(n_in_conns.size());
-                    temp_bias_gradient.resize(n_in_conns.size());
-                    temp_alpha_gradient2.resize(n_in_conns.size());
-
-                    node_gradient(temp_alpha_gradient1[i][j], n_in_conns[j].first,
-                                  &temp_weight_gradient[j], &temp_bias_gradient[j],
-                                  &temp_alpha_gradient2[j]);
+                    if(node.activation > best_val)
+                    {
+                        best_val = node.activation;
+                        best_node = &node;
+                    }
                 }
 
-                m_weight_gradient.push_back(temp_weight_gradient);
-                m_bias_gradient.push_back(temp_bias_gradient);
+                best_node->out_conns.push_back(std::pair(change_tars[val].first, weight));
+                change_tars[val].first->in_conns.push_back(std::pair(best_node, weight));
             }
-
-            printf("");*/
-        
-            
         }
+
 
     private:
 
@@ -192,6 +261,13 @@ namespace dcnn
             return found != vec->end();
         }
         
+        template<typename K, typename T>
+        static inline bool find_in_umap(std::unordered_map<K, T>* umap, K value)
+        {
+            auto found = umap->find(value);
+            return found != umap->end();
+        }
+
         template<typename T, typename F>
         static inline bool find_pair_in_vec(std::vector<std::pair<T, F>>* vec, T value)
         {
@@ -202,10 +278,43 @@ namespace dcnn
             return false;
         }
 
+        inline uint32_t get_node_index(Node* parent, Node* node)
+        {
+            for(uint32_t i = 0; i < parent->in_conns.size(); i++)
+            {
+                if(parent->in_conns[i].first == node) return i;
+            }
+            throw std::runtime_error("[ERROR] get_node_index requires node to be present in parent.in_conns.\n");
+        }
+
+        double get_alpha_gradient(Node* node)
+        {
+            double alpha = 0.0f;
+            for(uint32_t i = 0; i < node->out_conns.size(); i++)
+            {
+                find_in_umap(&m_alpha_gradient, node->out_conns[i].first) ? alpha += m_alpha_gradient[node->out_conns[i].first][get_node_index(node->out_conns[i].first, node)] : alpha = alpha;
+            }
+            return alpha;
+        }
+
+        template<typename T>
+        static void remove_index(std::vector<T>* vec, uint32_t index)
+        {
+            std::vector<T> vec_copy = *vec;
+            vec->resize(vec_copy.size() - 1);
+
+            bool off = 0;
+            for(uint32_t i = 0; i < vec_copy.size(); i++)
+            {
+                if(i == index) off++;
+                vec->at(i) = vec_copy[i + off];
+            }
+        }
+
 #pragma endregion
 
 #pragma region math
-
+/*
         template<typename T>
         static inline void mat_vec_mult(std::vector<std::vector<T>>* mat, std::vector<T>* vec,
                                         std::vector<std::vector<T>>* out, bool vertical = false)
@@ -327,9 +436,8 @@ namespace dcnn
                 *out *= vec->at(i);
             }
         }
-
-        void node_gradient(double target, Node* node, std::vector<double>* weight_gradient,
-                           double* bias_gradient, std::vector<double>* alpha_gradient)
+*/
+        void node_gradient(double target, Node* node)
         {
             auto eta = [](Node* nd) -> double
             {
@@ -342,12 +450,20 @@ namespace dcnn
                 return temp_activation + nd->bias;
             };
 
+            double temp_bias_gradient = 0.0f;
+            if(!find_in_umap<Node*, std::vector<double>>(&m_weight_gradient, node))
+            {
+                m_weight_gradient.insert(std::pair(node, std::vector<double>()));
+                m_alpha_gradient.insert(std::pair(node, std::vector<double>()));
+            }
+            
             for(uint32_t i = 0; i < node->in_conns.size(); i++)
             {
-                *bias_gradient += node->derivative(eta(node->in_conns[i].first)) * 2 * (node->activation - target);
-                weight_gradient->push_back(node->in_conns[i].first->activation * node->derivative(eta(node->in_conns[i].first)) * 2 * (node->activation - target));
-                alpha_gradient->push_back(node->in_conns[i].second * node->derivative(eta(node->in_conns[i].first)) * 2 * (node->activation - target));
+                temp_bias_gradient += node->derivative(eta(node->in_conns[i].first)) * 2 * (node->activation - target);
+                m_weight_gradient[node].push_back(node->in_conns[i].first->activation * node->derivative(eta(node->in_conns[i].first)) * 2 * (node->activation - target));
+                m_alpha_gradient[node].push_back(node->in_conns[i].second * node->derivative(eta(node->in_conns[i].first)) * 2 * (node->activation - target));
             }
+            m_bias_gradient.insert(std::pair(node, temp_bias_gradient));
         }
 
 #pragma endregion
@@ -377,13 +493,13 @@ namespace dcnn
                         node.out_conns.push_back(Dt);
                         dt->in_conns.push_back(std::pair(&node, Dt.second));
 
-                        m_connected_nodes.push_back(dt);
+                        m_in_connected_nodes.push_back(dt);
                     }
                 }
             }
             for(auto& inode: m_input_nodes)
             {
-                m_connected_nodes.push_back(&inode);
+                m_in_connected_nodes.push_back(&inode);
             }
         }
         void generate_random_hidden_nodes()
@@ -397,8 +513,8 @@ namespace dcnn
                 node.in_conns.reserve(conns);
                 for(uint32_t i = 0; i < conns; i++)
                 {
-                    auto val = rand_range<uint32_t>(0, m_connected_nodes.size() - 1);
-                    auto dt = m_connected_nodes[val];
+                    auto val = rand_range<uint32_t>(0, m_in_connected_nodes.size() - 1);
+                    auto dt = m_in_connected_nodes[val];
 
                     if(!find_pair_in_vec(&node.in_conns, dt))
                     {
@@ -410,7 +526,7 @@ namespace dcnn
                         node.in_conns.push_back(Dt);
                         dt->out_conns.push_back(std::pair(&node, Dt.second));
 
-                        m_connected_nodes.push_back(&node);
+                        m_in_connected_nodes.push_back(&node);
                     }
                 }
             }
@@ -439,10 +555,53 @@ namespace dcnn
                         node.in_conns.push_back(Dt);
                         dt->out_conns.push_back(std::pair(&node, Dt.second));
 
-                        m_connected_nodes.push_back(&node);
+                        m_in_connected_nodes.push_back(&node);
+                        m_out_connected_nodes.push_back(dt);
                     }
                 }
             }
+        
+            std::vector<Node*> next;
+            for(auto& node : m_out_connected_nodes)
+            {
+                for(auto& inode : node->in_conns)
+                {
+                    if(inode.first->node_type != 1)
+                    {
+                        m_out_connected_nodes.push_back(inode.first);
+                        next.push_back(inode.first);
+                    }
+                }
+            }
+
+            while(next.size() != 0)
+            {
+                for(auto& node : next)
+                {
+                    for(auto& inode : node->in_conns)
+                    {
+                        if(inode.first->node_type != 1)
+                        {
+                            m_out_connected_nodes.push_back(inode.first);
+                            next.push_back(inode.first);
+                        }
+                    }
+                }
+                next = std::vector<Node*>();
+            }
+
+            for(auto& node : m_hidden_nodes)
+            {
+                if(!find_in_vec(&m_out_connected_nodes, &node))
+                {
+                    auto val = rand_range<uint32_t>(0, m_out_connected_nodes.size());
+                    auto wt = rand_range<double>(-1.0f, 1.0f);
+                    node.out_conns.push_back(std::pair(m_out_connected_nodes[val], wt));   
+                }
+            }
+
+            m_in_connected_nodes = std::vector<Node*>();
+            m_out_connected_nodes = std::vector<Node*>();
         }
 
         void activate_node(Node* node)
@@ -493,18 +652,21 @@ namespace dcnn
         uint32_t m_min_connections = 2;
         uint32_t m_max_connections = 12;
 
-        double learning_rate = 0.01f;
+        double m_learning_rate = 0.01f;
+        double m_threshold = 0.3;
 
         std::vector<Node> m_input_nodes;
         std::vector<Node> m_output_nodes;
         std::vector<Node> m_hidden_nodes;
 
-        std::vector<Node*> m_connected_nodes;
+        std::vector<Node*> m_in_connected_nodes;
+        std::vector<Node*> m_out_connected_nodes;
 
         std::vector<double> m_inputs;
         std::vector<double> m_outputs;
 
-        std::vector<std::vector<std::vector<double>>> m_weight_gradient;
-        std::vector<std::vector<double>> m_bias_gradient;
+        std::unordered_map<Node*, std::vector<double>> m_weight_gradient;
+        std::unordered_map<Node*, double> m_bias_gradient;
+        std::unordered_map<Node*, std::vector<double>> m_alpha_gradient;
     };
 }

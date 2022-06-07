@@ -18,11 +18,11 @@ int main(int argc, char** argv)
   
   std::vector<double> test_data =
   {
-    6.0f, 1.4535f, 0.3f, 14.3949f
+    6.0f, 1.4535f, 0.3f, 1.0f
   };
   std::vector<double> test_target = 
   {
-    0.3f, 0.2f, 0.5f
+    0.3f, 0.7f, 0.2f
   };
   std::vector<double> test_output;
 
@@ -34,6 +34,8 @@ int main(int argc, char** argv)
   }
 
   net.propagate_backward(&test_target);
+
+  printf("");
 
   return 0;
 }
