@@ -61,13 +61,13 @@ namespace dcnn
             generate_random_output_nodes();
         }
     
-        void propagate_forward(std::vector<double>* inputs, std::vector<double>* outputs)
+        void propagate_forward(std::vector<double>* inputs, std::vector<double>* outputs, bool discard_outputs = false)
         {
             m_inputs = *inputs;
             
             activate_network();
 
-            *outputs = m_outputs;
+            if(!discard_outputs) *outputs = m_outputs;
         }
         void propagate_backward(std::vector<double>* target)
         {
@@ -184,7 +184,88 @@ namespace dcnn
                 change_tars[val].first->in_conns.push_back(std::pair(best_node, weight));
             }
         }
+        void train_batch(std::vector<std::vector<double>>* examples, std::vector<std::vector<double>>* targets)
+        {
+            for(uint32_t i = 0; i < examples->size(); i++)
+            {
+                auto& batch_example = examples->at(i);
+                auto& batch_target = targets->at(i);
 
+                propagate_forward(&batch_example, nullptr, true);
+                propagate_backward(&batch_target);
+
+                m_weight_gradient_batch.push_back(m_weight_gradient);
+                m_bias_gradient_batch.push_back(m_bias_gradient);
+                m_alpha_gradient_batch.push_back(m_alpha_gradient);
+
+                m_weight_gradient.clear();
+                m_bias_gradient.clear();
+                m_alpha_gradient.clear();
+            }
+
+            for(uint32_t i = 0; i < m_weight_gradient_batch.size(); i++)
+            {
+                for(auto& grd : m_weight_gradient_batch[i])
+                {
+                    for(uint32_t j = 0; j < grd.first->in_conns.size(); j++)
+                    {
+                        m_weight_gradient.insert(std::pair(grd.first, std::vector<double>(grd.first->in_conns.size())));
+                        m_weight_gradient[grd.first][j] += m_weight_gradient_batch[i][grd.first][j];
+                    }
+                }
+            }
+
+            for(uint32_t i = 0; i < m_bias_gradient_batch.size(); i++)
+            {
+                for(auto& grd : m_bias_gradient_batch[i])
+                {
+                    m_bias_gradient.insert(std::pair(grd.first, 0.0f));
+                    m_bias_gradient[grd.first] += m_bias_gradient_batch[i][grd.first];
+                }
+            }
+
+            for(uint32_t i = 0; i < m_alpha_gradient_batch.size(); i++)
+            {
+                for(auto& grd : m_alpha_gradient_batch[i])
+                {
+                    for(uint32_t j = 0; j < grd.first->in_conns.size(); j++)
+                    {
+                        m_alpha_gradient.insert(std::pair(grd.first, std::vector<double>(grd.first->in_conns.size())));
+                        m_alpha_gradient[grd.first][j] += m_alpha_gradient_batch[i][grd.first][j];
+                    }
+                }
+            }
+
+            for(auto& elem : m_weight_gradient)
+            {
+                for(uint32_t i = 0; i < elem.first->in_conns.size(); i++)
+                {
+                    elem.second[i] /= m_weight_gradient_batch.size();
+                }
+            }
+
+            for(auto& elem : m_bias_gradient)
+            {
+                elem.second /= m_bias_gradient_batch.size();
+            }
+
+            for(auto& elem : m_alpha_gradient)
+            {
+                for(uint32_t i = 0; i < elem.first->in_conns.size(); i++)
+                {
+                    elem.second[i] /= m_alpha_gradient_batch.size();
+                }
+            }
+
+            apply_gradient();
+        }
+        void train(std::vector<std::vector<std::vector<double>>>* examples, std::vector<std::vector<std::vector<double>>>* targets)
+        {
+            for(uint32_t i = 0; i < examples->size(); i++)
+            {
+                train_batch(&examples->at(i), &targets->at(i));
+            }
+        }
 
     private:
 
@@ -303,7 +384,7 @@ namespace dcnn
             std::vector<T> vec_copy = *vec;
             vec->resize(vec_copy.size() - 1);
 
-            bool off = 0;
+            uint32_t off = 0;
             for(uint32_t i = 0; i < vec_copy.size(); i++)
             {
                 if(i == index) off++;
@@ -668,5 +749,9 @@ namespace dcnn
         std::unordered_map<Node*, std::vector<double>> m_weight_gradient;
         std::unordered_map<Node*, double> m_bias_gradient;
         std::unordered_map<Node*, std::vector<double>> m_alpha_gradient;
+
+        std::vector<std::unordered_map<Node*, std::vector<double>>> m_weight_gradient_batch;
+        std::vector<std::unordered_map<Node*, double>> m_bias_gradient_batch;
+        std::vector<std::unordered_map<Node*, std::vector<double>>> m_alpha_gradient_batch;
     };
 }

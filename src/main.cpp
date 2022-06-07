@@ -34,6 +34,7 @@ int main(int argc, char** argv)
   }
 
   net.propagate_backward(&test_target);
+  net.apply_gradient();
 
   printf("");
 
